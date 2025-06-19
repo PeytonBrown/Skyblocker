@@ -2,6 +2,7 @@ package de.hysky.skyblocker.config;
 
 import com.google.gson.FieldNamingPolicy;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.logging.LogUtils;
 import de.hysky.skyblocker.SkyblockerMod;
 import de.hysky.skyblocker.config.categories.*;
 import de.hysky.skyblocker.debug.Debug;
@@ -22,14 +23,20 @@ import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import org.slf4j.Logger;
 
 import java.lang.StackWalker.Option;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.function.Consumers;
+import de.hysky.skyblocker.utils.Utils;
+import de.hysky.skyblocker.config.CloudConfigService;
 
 public class SkyblockerConfigManager {
+    private static final Logger LOGGER = LogUtils.getLogger();
     public static final int CONFIG_VERSION = 4;
     private static final Path CONFIG_FILE = FabricLoader.getInstance().getConfigDir().resolve("skyblocker.json");
     private static final ConfigClassHandler<SkyblockerConfig> HANDLER = ConfigClassHandler.createBuilder(SkyblockerConfig.class)
@@ -56,6 +63,19 @@ public class SkyblockerConfigManager {
         }
 
         HANDLER.load();
+
+        UUID uuid = Utils.getUuid();
+        if (uuid != null) {
+            String cloudJson = CloudConfigService.downloadConfig(uuid);
+            if (cloudJson != null && !cloudJson.isEmpty()) {
+                try {
+                    Files.writeString(CONFIG_FILE, cloudJson);
+                    HANDLER.load();
+                } catch (Exception e) {
+                    LOGGER.error("[Skyblocker] Failed to apply cloud config", e);
+                }
+            }
+        }
         ClientCommandRegistrationCallback.EVENT.register(((dispatcher, registryAccess) -> dispatcher.register(ClientCommandManager.literal(SkyblockerMod.NAMESPACE).then(optionsLiteral("config")).then(optionsLiteral("options")))));
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             if (screen instanceof GenericContainerScreen genericContainerScreen && screen.getTitle().getString().equals("SkyBlock Menu")) {
@@ -77,8 +97,18 @@ public class SkyblockerConfigManager {
      * Executes the given {@code action} to update fields in the config, then saves the changes.
      */
     public static void update(Consumer<SkyblockerConfig> action) {
-    	action.accept(get());
-    	HANDLER.save();
+        action.accept(get());
+        HANDLER.save();
+
+        UUID uuid = Utils.getUuid();
+        if (uuid != null) {
+            try {
+                String json = Files.readString(CONFIG_FILE);
+                CloudConfigService.uploadConfig(uuid, json);
+            } catch (Exception e) {
+                LOGGER.error("[Skyblocker] Failed to upload cloud config", e);
+            }
+        }
     }
 
     public static Screen createGUI(Screen parent) {
